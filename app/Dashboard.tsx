@@ -2,10 +2,11 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import {
-  AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, ReferenceLine,
+  ResponsiveContainer, Legend, Line, ReferenceLine,
 } from 'recharts';
+import Charges, { type ChargesMap } from './Charges';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MonthSnap {
@@ -104,6 +105,7 @@ export default function Dashboard() {
   const [error, setError]     = useState('');
   const [loading, setLoading] = useState(true);
   const [range, setRange]     = useState(Infinity);
+  const [charges, setCharges] = useState<ChargesMap>({});
 
   async function load() {
     setLoading(true); setError('');
@@ -228,10 +230,14 @@ export default function Dashboard() {
           <RangeSelector value={range} onChange={setRange} />
         </div>
 
-        {/* ── MRR vs Cash Evolution ── */}
-        <ChartCard title="MRR vs Cash collecté">
-          <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={history}>
+        {/* ── MRR vs Cash vs Profit ── */}
+        <ChartCard title="MRR · Cash collecté · Profit (après charges)">
+          <ResponsiveContainer width="100%" height={320}>
+            <AreaChart data={history.map(h => ({
+              ...h,
+              charges: charges[h.month]?.amountEur ?? null,
+              profit: h.cash > 0 && charges[h.month] ? Math.round((h.cash - charges[h.month].amountEur) * 100) / 100 : null,
+            }))}>
               <defs>
                 <linearGradient id="mrrGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.25} />
@@ -247,10 +253,11 @@ export default function Dashboard() {
               <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={v => fmtCompact(v, c)} width={70} />
               <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [fmt(v, c)]} />
               <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
-              <Area type="monotone" dataKey="mrr"  stroke="#6366f1" strokeWidth={2.5}
-                fill="url(#mrrGrad)"  dot={false} activeDot={{ r: 5 }} name="MRR (récurrent)" />
-              <Area type="monotone" dataKey="cash" stroke="#14b8a6" strokeWidth={2}
-                fill="url(#cashGrad)" dot={false} activeDot={{ r: 5 }} name="Cash collecté" />
+              <ReferenceLine y={0} stroke="#374151" />
+              <Area type="monotone" dataKey="mrr"     stroke="#6366f1" strokeWidth={2.5} fill="url(#mrrGrad)"  dot={false} activeDot={{ r: 5 }} name="MRR (récurrent)" />
+              <Area type="monotone" dataKey="cash"    stroke="#14b8a6" strokeWidth={2}   fill="url(#cashGrad)" dot={false} activeDot={{ r: 5 }} name="Cash collecté" />
+              <Line type="monotone" dataKey="charges" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="Charges" connectNulls />
+              <Line type="monotone" dataKey="profit"  stroke="#f59e0b" strokeWidth={2}   dot={{ r: 3, fill: '#f59e0b' }} name="Profit" connectNulls />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -401,6 +408,12 @@ export default function Dashboard() {
             </table>
           </div>
         </section>
+
+        {/* ── Charges ── */}
+        <Charges
+          months={data.history.map(h => h.month)}
+          onChange={setCharges}
+        />
 
       </main>
     </div>
