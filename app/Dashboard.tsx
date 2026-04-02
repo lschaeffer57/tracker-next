@@ -7,6 +7,7 @@ import {
   ResponsiveContainer, Legend, Line, ReferenceLine,
 } from 'recharts';
 import Charges, { type ChargesMap, monthTotals } from './Charges';
+import Creances, { type CreancesMap, monthTotals as creanceTotals } from './Creances';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MonthSnap {
@@ -105,7 +106,8 @@ export default function Dashboard() {
   const [error, setError]     = useState('');
   const [loading, setLoading] = useState(true);
   const [range, setRange]     = useState(Infinity);
-  const [charges, setCharges] = useState<ChargesMap>({});
+  const [charges, setCharges]   = useState<ChargesMap>({});
+  const [creances, setCreances] = useState<CreancesMap>({});
 
   async function load() {
     setLoading(true); setError('');
@@ -233,7 +235,19 @@ export default function Dashboard() {
         {/* ── MRR vs Cash vs Profit ── */}
         <ChartCard title="MRR · Cash collecté · Profit (après charges)">
           <ResponsiveContainer width="100%" height={320}>
-            <AreaChart data={(() => { const ct = monthTotals(charges); return history.map(h => ({ ...h, charges: ct[h.month] ?? null, profit: h.cash > 0 && ct[h.month] != null ? Math.round((h.cash - ct[h.month]) * 100) / 100 : null })); })()}>
+            <AreaChart data={(() => {
+              const ct = monthTotals(charges);
+              const cr = creanceTotals(creances);
+              return history.map(h => {
+                const charge   = ct[h.month] ?? null;
+                const creance  = cr[h.month] ?? null;
+                const cashTotal = h.cash + (creance ?? 0);
+                const profit = cashTotal > 0 && charge != null
+                  ? Math.round((cashTotal - charge) * 100) / 100
+                  : cashTotal > 0 ? null : null;
+                return { ...h, charges: charge, creances: creance, profit };
+              });
+            })()}>
               <defs>
                 <linearGradient id="mrrGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.25} />
@@ -250,10 +264,11 @@ export default function Dashboard() {
               <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [fmt(v, c)]} />
               <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
               <ReferenceLine y={0} stroke="#374151" />
-              <Area type="monotone" dataKey="mrr"     stroke="#6366f1" strokeWidth={2.5} fill="url(#mrrGrad)"  dot={false} activeDot={{ r: 5 }} name="MRR (récurrent)" />
-              <Area type="monotone" dataKey="cash"    stroke="#14b8a6" strokeWidth={2}   fill="url(#cashGrad)" dot={false} activeDot={{ r: 5 }} name="Cash collecté" />
-              <Line type="monotone" dataKey="charges" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="Charges" connectNulls />
-              <Line type="monotone" dataKey="profit"  stroke="#f59e0b" strokeWidth={2}   dot={{ r: 3, fill: '#f59e0b' }} name="Profit" connectNulls />
+              <Area type="monotone" dataKey="mrr"      stroke="#6366f1" strokeWidth={2.5} fill="url(#mrrGrad)"  dot={false} activeDot={{ r: 5 }} name="MRR (récurrent)" />
+              <Area type="monotone" dataKey="cash"     stroke="#14b8a6" strokeWidth={2}   fill="url(#cashGrad)" dot={false} activeDot={{ r: 5 }} name="Cash Stripe" />
+              <Line type="monotone" dataKey="creances" stroke="#34d399" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="Créances" connectNulls />
+              <Line type="monotone" dataKey="charges"  stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="Charges" connectNulls />
+              <Line type="monotone" dataKey="profit"   stroke="#f59e0b" strokeWidth={2}   dot={{ r: 3, fill: '#f59e0b' }} name="Profit net" connectNulls />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -398,6 +413,12 @@ export default function Dashboard() {
             </table>
           </div>
         </section>
+
+        {/* ── Créances ── */}
+        <Creances
+          months={data.history.map(h => h.month)}
+          onChange={setCreances}
+        />
 
         {/* ── Charges ── */}
         <Charges
