@@ -8,7 +8,13 @@ function getStripe() {
   if (!_stripe) _stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
   return _stripe;
 }
-const stripe = { get products() { return getStripe().products; }, get subscriptions() { return getStripe().subscriptions; }, get invoices() { return getStripe().invoices; } };
+const stripe = {
+  get products()      { return getStripe().products; },
+  get subscriptions() { return getStripe().subscriptions; },
+  get invoices()      { return getStripe().invoices; },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getItems(sub: Stripe.Subscription) {
   return sub.items?.data ?? [];
@@ -41,6 +47,8 @@ function planName(sub: Stripe.Subscription, products: Map<string, Stripe.Product
   return names.join(' + ') || 'Inconnu';
 }
 
+function r2(n: number) { return Math.round(n * 100) / 100; }
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchAll<T>(fn: (params: any) => Promise<Stripe.ApiList<T>>, params: Record<string, unknown> = {}): Promise<T[]> {
   const items: T[] = [];
@@ -55,9 +63,102 @@ async function fetchAll<T>(fn: (params: any) => Promise<Stripe.ApiList<T>>, para
   return items;
 }
 
-let cache: { data: unknown; ts: number } | null = null;
-const CACHE_TTL = 300_000;
+// ─── MRR history reconstruction ───────────────────────────────────────────────
+// Reconstitue le vrai MRR mois par mois depuis le premier abonnement.
+// Pour chaque mois, on calcule :
+//   - MRR  : abos actifs à la fin du mois
+//   - new MRR  : abos créés dans ce mois
+//   - churned MRR : abos annulés dans ce mois
+//   - customers : nb d'abos actifs à la fin du mois
 
+interface MonthSnap {
+  month: string;       // "YYYY-MM"
+  mrr: number;
+  customers: number;
+  new_mrr: number;
+  new_customers: number;
+  churned_mrr: number;
+  churned_customers: number;
+  net_mrr: number;
+  churn_rate: number;
+}
+
+function reconstructHistory(allSubs: Stripe.Subscription[]): MonthSnap[] {
+  if (!allSubs.length) return [];
+
+  // Earliest subscription start
+  const earliest = Math.min(...allSubs.map(s => s.created));
+  const startDate = new Date(earliest * 1000);
+  startDate.setDate(1);
+  startDate.setHours(0, 0, 0, 0);
+
+  const now = new Date();
+  const snaps: MonthSnap[] = [];
+
+  let cursor = new Date(startDate);
+  while (cursor <= now) {
+    const y = cursor.getFullYear();
+    const m = cursor.getMonth();
+    const monthStart = new Date(y, m, 1).getTime();
+    const monthEnd   = new Date(y, m + 1, 0, 23, 59, 59, 999).getTime();
+    const monthKey   = `${y}-${String(m + 1).padStart(2, '0')}`;
+
+    let mrr = 0, customers = 0;
+    let newMrr = 0, newCustomers = 0;
+    let churnedMrr = 0, churnedCustomers = 0;
+
+    for (const sub of allSubs) {
+      const subStart = sub.created * 1000;
+      const subEnd   = sub.canceled_at ? sub.canceled_at * 1000 : Infinity;
+      const amt      = monthlyAmountCents(sub) / 100;
+
+      // Active at end of month
+      if (subStart <= monthEnd && subEnd > monthEnd) {
+        mrr += amt;
+        customers++;
+      }
+      // New this month
+      if (subStart >= monthStart && subStart <= monthEnd) {
+        newMrr += amt;
+        newCustomers++;
+      }
+      // Churned this month
+      if (sub.canceled_at) {
+        const ca = sub.canceled_at * 1000;
+        if (ca >= monthStart && ca <= monthEnd) {
+          churnedMrr += amt;
+          churnedCustomers++;
+        }
+      }
+    }
+
+    const churnRate = (customers + churnedCustomers) > 0
+      ? r2(churnedCustomers / (customers + churnedCustomers) * 100)
+      : 0;
+
+    snaps.push({
+      month: monthKey,
+      mrr: r2(mrr),
+      customers,
+      new_mrr: r2(newMrr),
+      new_customers: newCustomers,
+      churned_mrr: r2(churnedMrr),
+      churned_customers: churnedCustomers,
+      net_mrr: r2(newMrr - churnedMrr),
+      churn_rate: churnRate,
+    });
+
+    cursor = new Date(y, m + 1, 1);
+  }
+
+  return snaps;
+}
+
+// ─── Cache ────────────────────────────────────────────────────────────────────
+let cache: { data: unknown; ts: number } | null = null;
+const CACHE_TTL = 300_000; // 5 min
+
+// ─── Route ────────────────────────────────────────────────────────────────────
 export async function GET() {
   if (cache && Date.now() - cache.ts < CACHE_TTL) {
     return NextResponse.json(cache.data);
@@ -67,23 +168,25 @@ export async function GET() {
     const now = new Date();
     const thirtyAgo = new Date(now.getTime() - 30 * 86400_000);
 
-    const [productsArr, activeSubs, trialingSubs, cancelledSubs, pastDueSubs, invoices] = await Promise.all([
+    const expand = ['data.items.data.price'];
+
+    const [productsArr, activeSubs, trialingSubs, cancelledSubs, pastDueSubs] = await Promise.all([
       fetchAll<Stripe.Product>((p) => stripe.products.list(p)),
-      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'active', expand: ['data.items.data.price'] })),
-      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'trialing', expand: ['data.items.data.price'] })),
-      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'canceled', expand: ['data.items.data.price'] })),
-      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'past_due', expand: ['data.items.data.price'] })),
-      fetchAll<Stripe.Invoice>((p) => stripe.invoices.list({ ...p, status: 'paid' })), // tout l'historique
+      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'active',   expand })),
+      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'trialing', expand })),
+      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'canceled', expand })),
+      fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'past_due', expand })),
     ]);
 
     const products = new Map(productsArr.map(p => [p.id, p]));
+    const allSubs  = [...activeSubs, ...trialingSubs, ...cancelledSubs, ...pastDueSubs];
 
-    // MRR
-    const mrr = activeSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
-    const arr = mrr * 12;
+    // ── Current snapshot ──────────────────────────────────────────────────────
+    const mrr  = activeSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
+    const arr  = mrr * 12;
     const arpu = activeSubs.length ? mrr / activeSubs.length : 0;
 
-    // MRR & subs by plan
+    // MRR & subs by plan (current)
     const mrrByPlan: Record<string, number> = {};
     const subsByPlan: Record<string, number> = {};
     for (const sub of activeSubs) {
@@ -92,8 +195,10 @@ export async function GET() {
       subsByPlan[name] = (subsByPlan[name] ?? 0) + 1;
     }
 
-    // Churn (30j)
-    const recentlyCancelled = cancelledSubs.filter(s => s.canceled_at && s.canceled_at * 1000 >= thirtyAgo.getTime());
+    // Churn 30j
+    const recentlyCancelled = cancelledSubs.filter(
+      s => s.canceled_at && s.canceled_at * 1000 >= thirtyAgo.getTime()
+    );
     const churnByPlan: Record<string, { active: number; cancelled: number; rate: number; churned_mrr: number }> = {};
     for (const name of Object.keys(subsByPlan)) {
       churnByPlan[name] = { active: subsByPlan[name], cancelled: 0, rate: 0, churned_mrr: 0 };
@@ -101,60 +206,49 @@ export async function GET() {
     for (const sub of recentlyCancelled) {
       const name = planName(sub, products);
       if (!churnByPlan[name]) churnByPlan[name] = { active: 0, cancelled: 0, rate: 0, churned_mrr: 0 };
-      churnByPlan[name].cancelled += 1;
+      churnByPlan[name].cancelled  += 1;
       churnByPlan[name].churned_mrr += monthlyAmountCents(sub) / 100;
     }
     for (const name of Object.keys(churnByPlan)) {
       const { active, cancelled } = churnByPlan[name];
-      churnByPlan[name].rate = active + cancelled > 0 ? Math.round(cancelled / (active + cancelled) * 10000) / 100 : 0;
+      churnByPlan[name].rate = active + cancelled > 0
+        ? r2(cancelled / (active + cancelled) * 100) : 0;
     }
 
-    const denom = activeSubs.length + recentlyCancelled.length;
-    const churnRate = denom > 0 ? Math.round(recentlyCancelled.length / denom * 10000) / 100 : 0;
-    const ltv = churnRate > 0 ? Math.round(arpu / (churnRate / 100) * 100) / 100 : 0;
+    const denom     = activeSubs.length + recentlyCancelled.length;
+    const churnRate = denom > 0 ? r2(recentlyCancelled.length / denom * 100) : 0;
+    const ltv       = churnRate > 0 ? r2(arpu / (churnRate / 100)) : 0;
 
-    // New MRR & churned MRR (30j)
-    const newSubs = activeSubs.filter(s => s.created * 1000 >= thirtyAgo.getTime());
-    const newMrr = newSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
+    const newSubs    = activeSubs.filter(s => s.created * 1000 >= thirtyAgo.getTime());
+    const newMrr     = newSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
     const churnedMrr = recentlyCancelled.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
 
-    // Historical MRR
-    const monthlyRev: Record<string, number> = {};
-    for (const inv of invoices) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (!(inv as any).subscription || !inv.amount_paid) continue;
-      const key = new Date(inv.created * 1000).toISOString().slice(0, 7);
-      monthlyRev[key] = (monthlyRev[key] ?? 0) + inv.amount_paid / 100;
-    }
-    const sortedMonths = Object.keys(monthlyRev).sort();
-    const growthRate = sortedMonths.length >= 2
-      ? Math.round((monthlyRev[sortedMonths.at(-1)!] - monthlyRev[sortedMonths.at(-2)!]) / monthlyRev[sortedMonths.at(-2)!] * 10000) / 100
+    // ── Full history (reconstruction from subscriptions) ──────────────────────
+    const history = reconstructHistory(allSubs);
+
+    // Growth rate & NRR from last 2 months of history
+    const growthRate = history.length >= 2
+      ? r2((history.at(-1)!.mrr - history.at(-2)!.mrr) / (history.at(-2)!.mrr || 1) * 100)
       : 0;
-    const nrr = sortedMonths.length >= 2 && monthlyRev[sortedMonths.at(-2)!]
-      ? Math.round(monthlyRev[sortedMonths.at(-1)!] / monthlyRev[sortedMonths.at(-2)!] * 10000) / 100
+    const nrr = history.length >= 2 && history.at(-2)!.mrr
+      ? r2(history.at(-1)!.mrr / history.at(-2)!.mrr * 100)
       : 0;
 
     const data = {
       currency: '€',
-      mrr: Math.round(mrr * 100) / 100,
-      arr: Math.round(arr * 100) / 100,
-      arpu: Math.round(arpu * 100) / 100,
-      ltv,
-      churn_rate: churnRate,
-      growth_rate: growthRate,
-      nrr,
-      active_customers: activeSubs.length,
+      mrr: r2(mrr), arr: r2(arr), arpu: r2(arpu), ltv,
+      churn_rate: churnRate, growth_rate: growthRate, nrr,
+      active_customers:   activeSubs.length,
       trialing_customers: trialingSubs.length,
       past_due_customers: pastDueSubs.length,
-      total_cancelled: cancelledSubs.length,
-      new_mrr: Math.round(newMrr * 100) / 100,
-      churned_mrr: Math.round(churnedMrr * 100) / 100,
-      net_mrr: Math.round((newMrr - churnedMrr) * 100) / 100,
+      total_cancelled:    cancelledSubs.length,
+      new_mrr: r2(newMrr), churned_mrr: r2(churnedMrr),
+      net_mrr: r2(newMrr - churnedMrr),
       new_customers: newSubs.length,
-      mrr_by_plan: mrrByPlan,
-      subs_by_plan: subsByPlan,
+      mrr_by_plan:   mrrByPlan,
+      subs_by_plan:  subsByPlan,
       churn_by_plan: churnByPlan,
-      monthly_mrr: { labels: sortedMonths, values: sortedMonths.map(m => Math.round(monthlyRev[m] * 100) / 100) },
+      history, // ← toute l'historique mois par mois
       last_updated: now.toISOString(),
     };
 
