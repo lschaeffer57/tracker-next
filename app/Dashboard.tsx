@@ -10,7 +10,7 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MonthSnap {
   month: string;
-  mrr: number; customers: number;
+  mrr: number; cash: number; customers: number;
   new_mrr: number; new_customers: number;
   churned_mrr: number; churned_customers: number;
   net_mrr: number; churn_rate: number;
@@ -24,6 +24,7 @@ interface KPIData {
   past_due_customers: number; total_cancelled: number;
   new_mrr: number; churned_mrr: number; net_mrr: number; new_customers: number;
   scheduled_churn_mrr: number; scheduled_churn_customers: number; healthy_mrr: number;
+  cash_this_month: number; cash_total: number;
   mrr_by_plan: Record<string, number>;
   subs_by_plan: Record<string, number>;
   churn_by_plan: Record<string, ChurnPlan>;
@@ -183,13 +184,14 @@ export default function Dashboard() {
         {/* ── KPI Cards ── */}
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Vue d&apos;ensemble</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-            <KpiCard label="MRR"            value={fmt(data.mrr, c)}  sub="Revenu mensuel récurrent" cls="text-indigo-400" />
-            <KpiCard label="ARR"            value={fmt(data.arr, c)}  sub="Revenu annuel récurrent"  cls="text-indigo-300" />
-            <KpiCard label="MRR sain"       value={fmt(data.healthy_mrr, c)} sub="Hors résiliations programmées" cls="text-emerald-400" />
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
+            <KpiCard label="MRR"            value={fmt(data.mrr, c)}             sub="Revenu mensuel récurrent"      cls="text-indigo-400" />
+            <KpiCard label="ARR"            value={fmt(data.arr, c)}             sub="Revenu annuel récurrent"       cls="text-indigo-300" />
+            <KpiCard label="MRR sain"       value={fmt(data.healthy_mrr, c)}     sub="Hors résiliations programmées" cls="text-emerald-400" />
+            <KpiCard label="Cash ce mois"   value={fmt(data.cash_this_month, c)} sub="Factures payées ce mois"       cls="text-teal-400" />
             <KpiCard label="Clients actifs" value={data.active_customers.toLocaleString('fr-FR')} sub={data.trialing_customers ? `+ ${data.trialing_customers} en essai` : 'abonnés payants'} cls="text-emerald-400" />
-            <KpiCard label="ARPU"           value={fmt(data.arpu, c)} sub="Revenu moyen / client"    cls="text-sky-400" />
-            <KpiCard label="LTV"            value={fmt(data.ltv, c)}  sub="Valeur vie client"         cls="text-violet-400" />
+            <KpiCard label="ARPU"           value={fmt(data.arpu, c)}            sub="Revenu moyen / client"         cls="text-sky-400" />
+            <KpiCard label="LTV"            value={fmt(data.ltv, c)}             sub="Valeur vie client"              cls="text-violet-400" />
           </div>
           {data.scheduled_churn_customers > 0 && (
             <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-orange-900/20 border border-orange-700/40 rounded-xl">
@@ -226,22 +228,29 @@ export default function Dashboard() {
           <RangeSelector value={range} onChange={setRange} />
         </div>
 
-        {/* ── MRR Evolution (area) ── */}
-        <ChartCard title="Évolution du MRR">
+        {/* ── MRR vs Cash Evolution ── */}
+        <ChartCard title="MRR vs Cash collecté">
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={history}>
               <defs>
                 <linearGradient id="mrrGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.3} />
+                  <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.25} />
                   <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="cashGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#14b8a6" stopOpacity={0.2} />
+                  <stop offset="95%" stopColor="#14b8a6" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
               <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 11 }} />
               <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={v => fmtCompact(v, c)} width={70} />
               <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [fmt(v, c)]} />
-              <Area type="monotone" dataKey="mrr" stroke="#6366f1" strokeWidth={2.5}
-                fill="url(#mrrGrad)" dot={false} activeDot={{ r: 5 }} name="MRR" />
+              <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
+              <Area type="monotone" dataKey="mrr"  stroke="#6366f1" strokeWidth={2.5}
+                fill="url(#mrrGrad)"  dot={false} activeDot={{ r: 5 }} name="MRR (récurrent)" />
+              <Area type="monotone" dataKey="cash" stroke="#14b8a6" strokeWidth={2}
+                fill="url(#cashGrad)" dot={false} activeDot={{ r: 5 }} name="Cash collecté" />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>

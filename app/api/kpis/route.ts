@@ -73,8 +73,9 @@ async function fetchAll<T>(fn: (params: any) => Promise<Stripe.ApiList<T>>, para
 //   - customers : nb d'abos actifs à la fin du mois
 
 interface MonthSnap {
-  month: string;       // "YYYY-MM"
+  month: string;
   mrr: number;
+  cash: number;        // cash réellement collecté (invoices payées)
   customers: number;
   new_mrr: number;
   new_customers: number;
@@ -84,7 +85,7 @@ interface MonthSnap {
   churn_rate: number;
 }
 
-function reconstructHistory(allSubs: Stripe.Subscription[]): MonthSnap[] {
+function reconstructHistory(allSubs: Stripe.Subscription[], cashByMonth: Record<string, number>): MonthSnap[] {
   if (!allSubs.length) return [];
 
   // Earliest subscription start
@@ -140,6 +141,7 @@ function reconstructHistory(allSubs: Stripe.Subscription[]): MonthSnap[] {
     snaps.push({
       month: monthKey,
       mrr: r2(mrr),
+      cash: r2(cashByMonth[monthKey] ?? 0),
       customers,
       new_mrr: r2(newMrr),
       new_customers: newCustomers,
@@ -171,16 +173,29 @@ export async function GET() {
 
     const expand = ['data.items.data.price'];
 
-    const [productsArr, activeSubs, trialingSubs, cancelledSubs, pastDueSubs] = await Promise.all([
+    const [productsArr, activeSubs, trialingSubs, cancelledSubs, pastDueSubs, invoices] = await Promise.all([
       fetchAll<Stripe.Product>((p) => stripe.products.list(p)),
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'active',   expand })),
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'trialing', expand })),
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'canceled', expand })),
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'past_due', expand })),
+      fetchAll<Stripe.Invoice>((p) => stripe.invoices.list({ ...p, status: 'paid' })),
     ]);
 
     const products = new Map(productsArr.map(p => [p.id, p]));
     const allSubs  = [...activeSubs, ...trialingSubs, ...cancelledSubs, ...pastDueSubs];
+
+    // ── Cash collecté par mois (invoices payées) ──────────────────────────────
+    const cashByMonth: Record<string, number> = {};
+    for (const inv of invoices) {
+      if (!inv.amount_paid) continue;
+      const key = new Date(inv.created * 1000).toISOString().slice(0, 7);
+      cashByMonth[key] = (cashByMonth[key] ?? 0) + inv.amount_paid / 100;
+    }
+    // Cash du mois en cours
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const cashThisMonth = r2(cashByMonth[currentMonth] ?? 0);
+    const cashTotal = r2(Object.values(cashByMonth).reduce((s, v) => s + v, 0));
 
     // ── Current snapshot ──────────────────────────────────────────────────────
     const mrr  = activeSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
@@ -234,7 +249,7 @@ export async function GET() {
     const healthyMrr = r2(mrr - scheduledChurnMrr);
 
     // ── Full history (reconstruction from subscriptions) ──────────────────────
-    const history = reconstructHistory(allSubs);
+    const history = reconstructHistory(allSubs, cashByMonth);
 
     // Growth rate & NRR from last 2 months of history
     const growthRate = history.length >= 2
@@ -256,9 +271,12 @@ export async function GET() {
       net_mrr: r2(newMrr - churnedMrr),
       new_customers: newSubs.length,
       // Résiliations programmées
-      scheduled_churn_mrr:      r2(scheduledChurnMrr),
+      scheduled_churn_mrr:       r2(scheduledChurnMrr),
       scheduled_churn_customers: scheduledChurnSubs.length,
-      healthy_mrr:              healthyMrr,
+      healthy_mrr:               healthyMrr,
+      // Cash réel
+      cash_this_month: cashThisMonth,
+      cash_total:      cashTotal,
       mrr_by_plan:   mrrByPlan,
       subs_by_plan:  subsByPlan,
       churn_by_plan: churnByPlan,
