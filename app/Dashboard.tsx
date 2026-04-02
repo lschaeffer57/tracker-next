@@ -271,12 +271,9 @@ export default function Dashboard() {
                 <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [fmt(Math.abs(v), c)]} />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
                 <ReferenceLine y={0} stroke="#374151" />
-                <Bar dataKey="new_mrr"     name="Nouveau MRR" fill="#10b981" radius={[3,3,0,0]} />
-                <Bar dataKey="churned_mrr" name="MRR Perdu"   fill="#ef4444" radius={[3,3,0,0]}
-                  // flip to negative for visual clarity
-                />
-                <Line type="monotone" dataKey="net_mrr" name="Net MRR" stroke="#f59e0b"
-                  strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="new_mrr"     name="Nouveau MRR" stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="churned_mrr" name="MRR Perdu"   stroke="#ef4444" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="net_mrr"     name="Net MRR"     stroke="#f59e0b" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} strokeDasharray="5 3" />
               </ComposedChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -297,10 +294,9 @@ export default function Dashboard() {
                 <YAxis yAxisId="right" orientation="right" tick={{ fill: '#6b7280', fontSize: 11 }} />
                 <Tooltip {...TOOLTIP_STYLE} />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
-                <Area yAxisId="left" type="monotone" dataKey="customers" name="Clients actifs"
-                  stroke="#10b981" strokeWidth={2} fill="url(#custGrad)" dot={false} />
-                <Bar  yAxisId="right" dataKey="new_customers"     name="Nouveaux" fill="#6366f1" radius={[3,3,0,0]} />
-                <Bar  yAxisId="right" dataKey="churned_customers" name="Résiliés" fill="#ef4444" radius={[3,3,0,0]} />
+                <Area yAxisId="left" type="monotone" dataKey="customers"        name="Clients actifs" stroke="#10b981" strokeWidth={2} fill="url(#custGrad)" dot={false} />
+                <Line yAxisId="right" type="monotone" dataKey="new_customers"     name="Nouveaux"      stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                <Line yAxisId="right" type="monotone" dataKey="churned_customers" name="Résiliés"      stroke="#ef4444" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -310,17 +306,15 @@ export default function Dashboard() {
         {/* ── Churn rate historique ── */}
         <ChartCard title="Taux de churn mensuel (%)">
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={history}>
+            <ComposedChart data={history}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
               <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 11 }} />
               <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={v => v + ' %'} />
               <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2) + ' %', 'Churn']} />
-              <Bar dataKey="churn_rate" name="Churn rate" radius={[3,3,0,0]}>
-                {history.map((entry, i) => (
-                  <Cell key={i} fill={entry.churn_rate > 10 ? '#ef4444' : entry.churn_rate > 5 ? '#f59e0b' : '#10b981'} />
-                ))}
-              </Bar>
-            </BarChart>
+              <ReferenceLine y={10} stroke="#ef4444" strokeDasharray="4 3" strokeOpacity={0.4} label={{ value: '10 %', fill: '#ef4444', fontSize: 10, opacity: 0.6 }} />
+              <ReferenceLine y={5}  stroke="#f59e0b" strokeDasharray="4 3" strokeOpacity={0.4} label={{ value: '5 %',  fill: '#f59e0b', fontSize: 10, opacity: 0.6 }} />
+              <Line type="monotone" dataKey="churn_rate" name="Churn rate" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3, fill: '#ef4444' }} activeDot={{ r: 5 }} />
+            </ComposedChart>
           </ResponsiveContainer>
         </ChartCard>
 
