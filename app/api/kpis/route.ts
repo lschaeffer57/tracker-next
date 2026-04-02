@@ -224,6 +224,15 @@ export async function GET() {
     const newMrr     = newSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
     const churnedMrr = recentlyCancelled.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
 
+    // ── Résiliations programmées (cancel_at_period_end) ────────────────────────
+    // Ces abos sont encore actifs et payants mais partiront en fin de période.
+    // On les inclut dans le MRR actuel (correct) mais on les signale séparément.
+    const scheduledChurnSubs = activeSubs.filter(s => s.cancel_at_period_end);
+    const scheduledChurnMrr  = scheduledChurnSubs.reduce((s, sub) => s + monthlyAmountCents(sub), 0) / 100;
+
+    // MRR "sain" = MRR total − MRR dont la résiliation est programmée
+    const healthyMrr = r2(mrr - scheduledChurnMrr);
+
     // ── Full history (reconstruction from subscriptions) ──────────────────────
     const history = reconstructHistory(allSubs);
 
@@ -246,6 +255,10 @@ export async function GET() {
       new_mrr: r2(newMrr), churned_mrr: r2(churnedMrr),
       net_mrr: r2(newMrr - churnedMrr),
       new_customers: newSubs.length,
+      // Résiliations programmées
+      scheduled_churn_mrr:      r2(scheduledChurnMrr),
+      scheduled_churn_customers: scheduledChurnSubs.length,
+      healthy_mrr:              healthyMrr,
       mrr_by_plan:   mrrByPlan,
       subs_by_plan:  subsByPlan,
       churn_by_plan: churnByPlan,

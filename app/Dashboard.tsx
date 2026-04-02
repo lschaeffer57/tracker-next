@@ -23,6 +23,7 @@ interface KPIData {
   active_customers: number; trialing_customers: number;
   past_due_customers: number; total_cancelled: number;
   new_mrr: number; churned_mrr: number; net_mrr: number; new_customers: number;
+  scheduled_churn_mrr: number; scheduled_churn_customers: number; healthy_mrr: number;
   mrr_by_plan: Record<string, number>;
   subs_by_plan: Record<string, number>;
   churn_by_plan: Record<string, ChurnPlan>;
@@ -182,13 +183,24 @@ export default function Dashboard() {
         {/* ── KPI Cards ── */}
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Vue d&apos;ensemble</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
             <KpiCard label="MRR"            value={fmt(data.mrr, c)}  sub="Revenu mensuel récurrent" cls="text-indigo-400" />
             <KpiCard label="ARR"            value={fmt(data.arr, c)}  sub="Revenu annuel récurrent"  cls="text-indigo-300" />
+            <KpiCard label="MRR sain"       value={fmt(data.healthy_mrr, c)} sub="Hors résiliations programmées" cls="text-emerald-400" />
             <KpiCard label="Clients actifs" value={data.active_customers.toLocaleString('fr-FR')} sub={data.trialing_customers ? `+ ${data.trialing_customers} en essai` : 'abonnés payants'} cls="text-emerald-400" />
             <KpiCard label="ARPU"           value={fmt(data.arpu, c)} sub="Revenu moyen / client"    cls="text-sky-400" />
             <KpiCard label="LTV"            value={fmt(data.ltv, c)}  sub="Valeur vie client"         cls="text-violet-400" />
           </div>
+          {data.scheduled_churn_customers > 0 && (
+            <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-orange-900/20 border border-orange-700/40 rounded-xl">
+              <span className="text-orange-400 text-lg">⚠</span>
+              <div>
+                <span className="text-orange-300 font-semibold text-sm">{fmt(data.scheduled_churn_mrr, c)} de MRR</span>
+                <span className="text-orange-400/80 text-sm"> en cours de résiliation </span>
+                <span className="text-orange-400/60 text-xs">({data.scheduled_churn_customers} client{data.scheduled_churn_customers > 1 ? 's' : ''} avec cancel_at_period_end — encore actifs jusqu&apos;à fin de période)</span>
+              </div>
+            </div>
+          )}
         </section>
 
         <section>
