@@ -6,7 +6,7 @@ import {
   ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Line, ReferenceLine,
 } from 'recharts';
-import Charges, { type ChargesMap } from './Charges';
+import Charges, { type ChargesMap, monthTotals } from './Charges';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MonthSnap {
@@ -233,11 +233,7 @@ export default function Dashboard() {
         {/* ── MRR vs Cash vs Profit ── */}
         <ChartCard title="MRR · Cash collecté · Profit (après charges)">
           <ResponsiveContainer width="100%" height={320}>
-            <AreaChart data={history.map(h => ({
-              ...h,
-              charges: charges[h.month]?.amountEur ?? null,
-              profit: h.cash > 0 && charges[h.month] ? Math.round((h.cash - charges[h.month].amountEur) * 100) / 100 : null,
-            }))}>
+            <AreaChart data={(() => { const ct = monthTotals(charges); return history.map(h => ({ ...h, charges: ct[h.month] ?? null, profit: h.cash > 0 && ct[h.month] != null ? Math.round((h.cash - ct[h.month]) * 100) / 100 : null })); })()}>
               <defs>
                 <linearGradient id="mrrGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.25} />
