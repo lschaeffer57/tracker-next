@@ -66,7 +66,6 @@ export async function GET() {
   try {
     const now = new Date();
     const thirtyAgo = new Date(now.getTime() - 30 * 86400_000);
-    const twelveAgo = new Date(now.getTime() - 365 * 86400_000);
 
     const [productsArr, activeSubs, trialingSubs, cancelledSubs, pastDueSubs, invoices] = await Promise.all([
       fetchAll<Stripe.Product>((p) => stripe.products.list(p)),
@@ -74,7 +73,7 @@ export async function GET() {
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'trialing', expand: ['data.items.data.price'] })),
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'canceled', expand: ['data.items.data.price'] })),
       fetchAll<Stripe.Subscription>((p) => stripe.subscriptions.list({ ...p, status: 'past_due', expand: ['data.items.data.price'] })),
-      fetchAll<Stripe.Invoice>((p) => stripe.invoices.list({ ...p, status: 'paid', created: { gte: Math.floor(twelveAgo.getTime() / 1000) } })),
+      fetchAll<Stripe.Invoice>((p) => stripe.invoices.list({ ...p, status: 'paid' })), // tout l'historique
     ]);
 
     const products = new Map(productsArr.map(p => [p.id, p]));
