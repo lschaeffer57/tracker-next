@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // secondes (plan Pro Vercel)
 
 let _stripe: Stripe | null = null;
 function getStripe() {
